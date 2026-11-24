@@ -1,35 +1,58 @@
-name: Lab 6B image baseline
+name: Lab 6B image comparison
 on:
+  pull_request:
+    branches: [lab05-quality]
+    paths: ['Dockerfile', '.dockerignore', '.github/workflows/image-baseline.yml']
   push:
     branches: [lab-06]
-    paths: ['.github/workflows/image-baseline.yml']
+    paths: ['Dockerfile', '.dockerignore', '.github/workflows/image-baseline.yml']
   workflow_dispatch:
 jobs:
-  baseline:
+  compare:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 70db2e79b7cbd0f2eb76afe02bd78fa9d7b357fa
-      - name: Measure original image
+          path: before
+      - uses: actions/checkout@v4
+        with:
+          path: after
+      - name: Compare images and layer cache
+        shell: bash
         run: |
           set -euo pipefail
-          docker build -t tutberry:before .
-          {
-            echo '## Original image'
-            docker image ls tutberry:before --format '{{.Size}}'
-            docker image inspect -f 'Bytes: {{.Size}}; layers: {{len .RootFS.Layers}}' tutberry:before
-            docker run --rm tutberry:before id
-            printf '\n# cache probe\n' >> tutberry/api_booking.py
+          echo '| Image | Bytes | Layers | Cold seconds | Code rebuild seconds |' >> "$GITHUB_STEP_SUMMARY"
+          echo '|---|---:|---:|---:|---:|' >> "$GITHUB_STEP_SUMMARY"
+          for variant in before after; do
             start=$(date +%s)
-            docker build -t tutberry:before . >&2
-            echo "Rebuild seconds: $(($(date +%s)-start))"
-            git restore tutberry/api_booking.py
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Scan original image
+            docker build --no-cache -t tutberry:$variant "$variant"
+            cold=$(($(date +%s)-start))
+            printf '\n# cache probe\n' >> "$variant/tutberry/api_booking.py"
+            start=$(date +%s)
+            docker build --progress=plain -t tutberry:$variant "$variant" 2>&1 | tee "$variant-build.log"
+            warm=$(($(date +%s)-start))
+            git -C "$variant" restore tutberry/api_booking.py
+            size=$(docker image inspect -f '{{.Size}}' tutberry:$variant)
+            layers=$(docker image inspect -f '{{len .RootFS.Layers}}' tutberry:$variant)
+            echo "| $variant | $size | $layers | $cold | $warm |" >> "$GITHUB_STEP_SUMMARY"
+            docker run --rm tutberry:$variant id
+          done
+          docker run --rm tutberry:after sh -ec 'test "$(id -u)" = 10001; for t in uv uvx ruff mypy pytest; do if command -v "$t"; then exit 1; fi; done'
+          docker run --rm tutberry:after python -c 'import django, pika, redis; import importlib.util; assert importlib.util.find_spec("pytest") is None'
+          before=$(docker image inspect -f '{{.Size}}' tutberry:before)
+          after=$(docker image inspect -f '{{.Size}}' tutberry:after)
+          awk -v b="$before" -v a="$after" 'BEGIN {printf "Size reduction: %.2f%%\n",100*(b-a)/b}' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Scan both images
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.53.0 image --scanners vuln --severity HIGH,CRITICAL --format table tutberry:before | tee baseline-trivy.txt
+          set -o pipefail
+          for variant in before after; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.53.0 image --scanners vuln --severity HIGH,CRITICAL --format table tutberry:$variant | tee "$variant-trivy.txt"
+          done
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: baseline-trivy
-          path: baseline-trivy.txt
+          name: image-comparison
+          path: |
+            *-build.log
+            *-trivy.txt
