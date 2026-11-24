@@ -7,8 +7,9 @@ import pika
 
 from tutberry.domain.events import DomainEvent
 
-EXCHANGE = "booking.events"
 from tutberry.workers.cache_invalidator import CACHE_INVALIDATION_BINDINGS
+
+EXCHANGE = "booking.events"
 
 QUEUES = {"booking.notifications": ("booking.*",), "booking.cache": CACHE_INVALIDATION_BINDINGS}
 logger = logging.getLogger(__name__)
@@ -31,9 +32,10 @@ class RabbitMqEventBus:
 
     def publish(self, event: DomainEvent) -> None:
         params = pika.URLParameters(self.url)
-        params.socket_timeout = 3
-        params.stack_timeout = 5
-        params.blocked_connection_timeout = 5
+        params.connection_attempts = 1
+        params.socket_timeout = 1
+        params.stack_timeout = 2
+        params.blocked_connection_timeout = 2
         connection = pika.BlockingConnection(params)
         try:
             channel = connection.channel()
