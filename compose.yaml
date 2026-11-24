@@ -18,6 +18,20 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      cache:
+        condition: service_started
+      broker:
+        condition: service_started
+  worker:
+    <<: *app
+    command: ["python", "-m", "tutberry.workers.notifier"]
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
   db:
     image: postgres:17-alpine
     environment:
