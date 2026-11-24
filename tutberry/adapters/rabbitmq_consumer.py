@@ -54,7 +54,7 @@ class RabbitMqConsumer:
             self.handler.handle(kind, payload)
             if claimed:
                 self.processed.mark_done(event_id, self.keep)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - unknown handler failures go to DLQ
             if claimed:
                 try:
                     self.processed.release(event_id)
@@ -80,7 +80,7 @@ class RabbitMqConsumer:
                 channel.basic_publish(exchange="", routing_key=destination, body=body,
                     properties=pika.BasicProperties(content_type="application/json",
                         delivery_mode=2, message_id=event_id, headers=headers), mandatory=True)
-            except Exception:
+            except (pika.exceptions.AMQPError, OSError):
                 channel.basic_nack(tag, requeue=True)
                 return
         channel.basic_ack(tag)
