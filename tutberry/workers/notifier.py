@@ -6,13 +6,13 @@ import time
 
 import django
 import pika
-
 from django.conf import settings
+
 from tutberry.adapters.rabbitmq_consumer import RabbitMqConsumer
-from tutberry.adapters.valkey_cache import client_for
-from tutberry.workers.cache_invalidator import CacheInvalidationHandler
 from tutberry.adapters.smtp_mail import SmtpMail
+from tutberry.adapters.valkey_cache import client_for
 from tutberry.adapters.valkey_processed_events import ValkeyProcessedEvents
+from tutberry.workers.cache_invalidator import CacheInvalidationHandler
 from tutberry.workers.notification_handler import NotificationHandler
 
 logger = logging.getLogger(__name__)
