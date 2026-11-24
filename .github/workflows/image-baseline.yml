@@ -1,0 +1,35 @@
+name: Lab 6B image baseline
+on:
+  push:
+    branches: [lab-06]
+    paths: ['.github/workflows/image-baseline.yml']
+  workflow_dispatch:
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 70db2e79b7cbd0f2eb76afe02bd78fa9d7b357fa
+      - name: Measure original image
+        run: |
+          set -euo pipefail
+          docker build -t tutberry:before .
+          {
+            echo '## Original image'
+            docker image ls tutberry:before --format '{{.Size}}'
+            docker image inspect -f 'Bytes: {{.Size}}; layers: {{len .RootFS.Layers}}' tutberry:before
+            docker run --rm tutberry:before id
+            printf '\n# cache probe\n' >> tutberry/api_booking.py
+            start=$(date +%s)
+            docker build -t tutberry:before . >&2
+            echo "Rebuild seconds: $(($(date +%s)-start))"
+            git restore tutberry/api_booking.py
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Scan original image
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.53.0 image --scanners vuln --severity HIGH,CRITICAL --format table tutberry:before | tee baseline-trivy.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baseline-trivy
+          path: baseline-trivy.txt
