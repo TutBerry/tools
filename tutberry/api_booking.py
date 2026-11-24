@@ -9,11 +9,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from tutberry.adapters.rabbitmq_publisher import RabbitMqEventBus
-from tutberry.services.after_commit import AfterCommitEventBus, BookingEventNotifier
 from tutberry.adapters.sql_booking import SqlBookingRepository
 from tutberry.api_errors import problem
 from tutberry.domain.booking import BookingError
 from tutberry.models import ListingAvailabilityRecord, ListingRecord
+from tutberry.services.after_commit import AfterCommitEventBus, BookingEventNotifier
 from tutberry.services.booking_service import BookingRequest, BookingService
 
 
