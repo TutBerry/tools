@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-slim-trixie AS builder
+FROM python:3.13-alpine AS builder
 WORKDIR /app
 COPY requirements.txt requirements-dev.txt ./
 ARG INSTALL_DEV=false
@@ -13,9 +13,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 RUN if [ "$INSTALL_DEV" != "true" ]; then /opt/venv/bin/python -m pip uninstall -y pip; fi
 
-FROM python:3.13-slim-trixie AS runtime
+FROM python:3.13-alpine AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH="/opt/venv/bin:$PATH"
-RUN groupadd --gid 10001 appuser && useradd --uid 10001 --gid appuser --create-home --shell /usr/sbin/nologin appuser
+RUN addgroup -g 10001 appuser && adduser -D -u 10001 -G appuser -s /sbin/nologin appuser
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=appuser:appuser manage.py ./
