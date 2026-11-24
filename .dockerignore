@@ -6,3 +6,9 @@ __pycache__
 .mypy_cache
 .ruff_cache
 *.pyc
+docs/
+.gitHub/
+.github/
+.env.*
+!.env.example
+.coverage*
