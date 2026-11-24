@@ -5,10 +5,10 @@
 BEGIN;
 
 -- Create a disposable listing so the benchmark works on a fresh CI database.
-INSERT INTO tutberry_listingrecord (id, owner_id, title, daily_rate, deposit, status)
+INSERT INTO tutberry_listingrecord (id, owner_id, title, daily_rate, deposit, status, category, location)
 VALUES ('11111111-1111-4111-8111-111111111111',
         '22222222-2222-4222-8222-222222222222',
-        'EXPLAIN fixture', 100.00, 0.00, 'active');
+        'EXPLAIN fixture', 100.00, 0.00, 'active', 'tools', 'test');
 
 -- Generate a repeatable set of cancelled bookings for one tenant.
 -- The exclusion constraint still applies to every generated row.
