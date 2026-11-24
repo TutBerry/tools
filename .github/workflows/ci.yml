@@ -3,10 +3,12 @@ name: CI
 on:
   push:
     branches: [main, lab05-quality, lab-06]
+    tags: ["v*"]
   pull_request:
 
 jobs:
   quality-and-tests:
+    if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -90,6 +92,7 @@ jobs:
         run: timeout --signal=TERM --kill-after=5s 60s python -m pytest tests/ -q -p no:cacheprovider -p randomly --randomly-seed=20261121
 
   async-integration:
+    if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
     services:
       rabbitmq:
@@ -210,4 +213,38 @@ jobs:
           test "$(docker run --rm "$source" printenv APP_VERSION)" = "$tag"
           docker tag "$source" "$target"
           docker push "$target"
+          docker tag "$target" "ghcr.io/${GITHUB_REPOSITORY,,}/tutberry:latest"
+          docker push "ghcr.io/${GITHUB_REPOSITORY,,}/tutberry:latest"
           docker image inspect -f '{{index .RepoDigests 0}}' "$target" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  release-image:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag previously published main image
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          commit=$(git rev-parse HEAD)
+          git merge-base --is-ancestor "$commit" origin/main
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version="sha-${commit:0:7}"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/tutberry"
+          docker pull "$image:$version"
+          test "$(docker run --rm "$image:$version" printenv APP_VERSION)" = "$version"
+          docker tag "$image:$version" "$image:$GITHUB_REF_NAME"
+          docker push "$image:$GITHUB_REF_NAME"
+          echo "$GITHUB_REF_NAME -> $version" >> "$GITHUB_STEP_SUMMARY"
+          docker image inspect -f '{{index .RepoDigests 0}}' "$image:$version" >> "$GITHUB_STEP_SUMMARY"
