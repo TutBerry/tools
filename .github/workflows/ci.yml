@@ -128,3 +128,40 @@ jobs:
           fi
       - name: Integration tests
         run: python -m pytest tests/test_broker_integration.py tests/test_valkey_integration.py tests/test_event_idempotency.py -q -p no:randomly
+
+  image-security:
+    needs: [quality-and-tests, async-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Set image version
+        id: version
+        run: echo "tag=sha-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          pull: true
+          tags: tutberry:${{ steps.version.outputs.tag }}
+          build-args: APP_VERSION=${{ steps.version.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Runtime properties
+        env:
+          IMAGE: tutberry:${{ steps.version.outputs.tag }}
+        run: |
+          docker run --rm "$IMAGE" sh -ec 'test "$(id -u)" = 10001; for t in uv uvx ruff mypy pytest; do if command -v "$t"; then exit 1; fi; done'
+          docker run --rm "$IMAGE" python -c 'import django, pika, redis'
+          docker image inspect -f '{{.Size}}' "$IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Scan image
+        env:
+          IMAGE: tutberry:${{ steps.version.outputs.tag }}
+        run: |
+          set -o pipefail
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.53.0 image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 "$IMAGE" | tee trivy-report.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-report
+          path: trivy-report.txt
