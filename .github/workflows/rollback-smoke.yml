@@ -1,0 +1,60 @@
+name: Lab 6B rollback smoke
+on:
+  workflow_dispatch:
+  push:
+    branches: [lab-06]
+    paths: ['.github/workflows/rollback-smoke.yml']
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build two test versions
+        run: |
+          docker build --build-arg APP_VERSION=sha-1111111 -t tutberry:sha-1111111 .
+          docker build --build-arg APP_VERSION=sha-2222222 -t tutberry:sha-2222222 .
+      - name: Exercise version switch and rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GITHUB_REPOSITORY=tutberry/tools
+          export DJANGO_SECRET_KEY=isolated-ci-only-secret
+          export DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+          export POSTGRES_PASSWORD=ci-only-password
+          export RABBITMQ_DEFAULT_PASS=ci-only-password
+          export DATABASE_URL=postgresql://tutberry:ci-only-password@db:5432/tutberry
+          export BROKER_URL=amqp://tutberry:ci-only-password@broker:5672/
+          export IMAGE_TAG=sha-1111111
+          for tag in sha-1111111 sha-2222222; do
+            docker tag "tutberry:$tag" "ghcr.io/tutberry/tools/tutberry:$tag"
+          done
+          compose() { docker compose -f compose.prod.yaml "$@"; }
+          verify() {
+            curl -fsS http://127.0.0.1:8080/health
+            curl -fsS http://127.0.0.1:8080/version | python -c 'import json,os,sys; assert json.load(sys.stdin)["version"] == os.environ["IMAGE_TAG"]'
+          }
+          compose up -d --wait db broker cache mailpit
+          compose run --rm --no-deps api python manage.py migrate --noinput
+          compose up -d --wait --pull never api worker
+          verify
+          export IMAGE_TAG=sha-2222222
+          compose run --rm --no-deps api python manage.py migrate --noinput
+          compose up -d --wait --pull never api worker
+          verify
+          export IMAGE_TAG=sha-1111111
+          start=$(date +%s)
+          compose up -d --wait --pull never api worker
+          verify
+          echo "Rollback operation seconds: $(($(date +%s)-start))" >> "$GITHUB_STEP_SUMMARY"
+      - name: Cleanup isolated services
+        if: always()
+        env:
+          GITHUB_REPOSITORY: tutberry/tools
+          IMAGE_TAG: sha-1111111
+          DJANGO_SECRET_KEY: isolated-ci-only-secret
+          DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+          POSTGRES_PASSWORD: ci-only-password
+          RABBITMQ_DEFAULT_PASS: ci-only-password
+          DATABASE_URL: postgresql://tutberry:ci-only-password@db:5432/tutberry
+          BROKER_URL: amqp://tutberry:ci-only-password@broker:5672/
+        run: docker compose -f compose.prod.yaml down -v
