@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-slim AS builder
+FROM python:3.13-slim-bookworm AS builder
 WORKDIR /app
 COPY requirements.txt requirements-dev.txt ./
 ARG INSTALL_DEV=false
@@ -11,7 +11,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         /opt/venv/bin/pip install -r requirements.txt; \
     fi
 
-FROM python:3.13-slim AS runtime
+RUN if [ "$INSTALL_DEV" != "true" ]; then /opt/venv/bin/python -m pip uninstall -y pip; fi
+
+FROM python:3.13-slim-bookworm AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH="/opt/venv/bin:$PATH"
 RUN groupadd --gid 10001 appuser && useradd --uid 10001 --gid appuser --create-home --shell /usr/sbin/nologin appuser
 WORKDIR /app
