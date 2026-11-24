@@ -1,14 +1,17 @@
 """Manual acknowledgements and bounded retry delivery."""
 import json
+import logging
 import random
-import time
+from datetime import UTC, datetime
 from typing import Protocol
 
 import pika
 
 from tutberry.adapters.rabbitmq_publisher import setup_topology
 from tutberry.ports.processed_events import Claim
-from tutberry.workers.errors import LeaseHeld, PermanentFailure
+from tutberry.workers.errors import LeaseHeld, PermanentFailure, TransientFailure
+
+logger = logging.getLogger(__name__)
 
 
 class EventHandler(Protocol):
@@ -32,12 +35,13 @@ class RabbitMqConsumer:
         tag = method.delivery_tag
         headers = dict(properties.headers or {})
         kind = headers.get("x-original-routing-key", method.routing_key)
-        attempt = int(headers.get("x-attempt", 1))
+        attempt = 1
         claimed = False
         event_id = properties.message_id
         try:
+            attempt = int(headers.get("x-attempt", 1))
             payload = json.loads(body)
-            if not isinstance(payload, dict) or not event_id or payload.get("event_id") != event_id:
+            if attempt < 1 or not isinstance(payload, dict) or not event_id or payload.get("event_id") != event_id:
                 raise PermanentFailure("Invalid event envelope")
             if self.processed is not None:
                 claim = self.processed.claim(event_id, self.lease)
@@ -50,29 +54,33 @@ class RabbitMqConsumer:
             self.handler.handle(kind, payload)
             if claimed:
                 self.processed.mark_done(event_id, self.keep)
-            channel.basic_ack(tag)
-            return
-        except (ValueError, PermanentFailure):
-            if claimed:
-                self.processed.release(event_id)
-            channel.basic_reject(tag, requeue=False)
-            return
         except Exception as exc:
             if claimed:
-                self.processed.release(event_id)
-            if not isinstance(exc, LeaseHeld) and attempt >= self.max_attempts:
-                channel.basic_reject(tag, requeue=False)
-                return
-            delay = min(30, self.lease) if isinstance(exc, LeaseHeld) else random.uniform(0, min(30, 2 ** attempt))
-            # BlockingConnection.sleep services heartbeats during the wait.
-            channel.connection.sleep(delay)
-            headers.update({"x-original-routing-key": kind,
-                            "x-attempt": attempt if isinstance(exc, LeaseHeld) else attempt + 1})
+                try:
+                    self.processed.release(event_id)
+                except TransientFailure:
+                    logger.warning("dedup_release_failed %s", event_id)
+            retry = isinstance(exc, TransientFailure) and (
+                isinstance(exc, LeaseHeld) or attempt < self.max_attempts)
+            headers["x-original-routing-key"] = kind
+            if retry:
+                delay = min(30, self.lease) if isinstance(exc, LeaseHeld) else random.uniform(0, min(30, 2 ** (attempt - 1)))
+                logger.warning("event_retry_scheduled %s attempt=%s delay=%s", event_id, attempt, delay)
+                channel.connection.sleep(delay)
+                headers["x-attempt"] = attempt if isinstance(exc, LeaseHeld) else attempt + 1
+                destination = self.queue
+            else:
+                headers.pop("x-attempt", None)
+                headers.update({"x-attempts": attempt, "x-failure-kind": type(exc).__name__,
+                                "x-failure-reason": str(exc)[:500],
+                                "x-failed-at": datetime.now(UTC).isoformat()})
+                destination = self.queue + ".dlq"
+                logger.error("event_dead_lettered %s attempt=%s", event_id, attempt)
             try:
-                channel.basic_publish(exchange="", routing_key=self.queue, body=body,
+                channel.basic_publish(exchange="", routing_key=destination, body=body,
                     properties=pika.BasicProperties(content_type="application/json",
                         delivery_mode=2, message_id=event_id, headers=headers), mandatory=True)
             except Exception:
                 channel.basic_nack(tag, requeue=True)
                 return
-            channel.basic_ack(tag)
+        channel.basic_ack(tag)
