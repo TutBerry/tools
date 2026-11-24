@@ -165,3 +165,49 @@ jobs:
         with:
           name: trivy-report
           path: trivy-report.txt
+
+      - name: Save verified image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: tutberry:${{ steps.version.outputs.tag }}
+        run: |
+          docker image inspect -f '{{.Id}}' "$IMAGE" > image-id.txt
+          docker save "$IMAGE" -o verified-image.tar
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: verified-image
+          path: |
+            verified-image.tar
+            image-id.txt
+          retention-days: 1
+
+  publish-image:
+    needs: [quality-and-tests, async-integration, image-security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-image
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="sha-${GITHUB_SHA:0:7}"
+          source="tutberry:$tag"
+          target="ghcr.io/${GITHUB_REPOSITORY,,}/tutberry:$tag"
+          docker load -i verified-image.tar
+          test "$(docker image inspect -f '{{.Id}}' "$source")" = "$(cat image-id.txt)"
+          test "$(docker run --rm "$source" printenv APP_VERSION)" = "$tag"
+          docker tag "$source" "$target"
+          docker push "$target"
+          docker image inspect -f '{{index .RepoDigests 0}}' "$target" | tee -a "$GITHUB_STEP_SUMMARY"
