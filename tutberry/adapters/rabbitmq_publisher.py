@@ -8,7 +8,9 @@ import pika
 from tutberry.domain.events import DomainEvent
 
 EXCHANGE = "booking.events"
-QUEUES = {"booking.notifications": ("booking.*",), "booking.cache": ("booking.*",)}
+from tutberry.workers.cache_invalidator import CACHE_INVALIDATION_BINDINGS
+
+QUEUES = {"booking.notifications": ("booking.*",), "booking.cache": CACHE_INVALIDATION_BINDINGS}
 logger = logging.getLogger(__name__)
 
 
