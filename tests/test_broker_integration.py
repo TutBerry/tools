@@ -6,7 +6,11 @@ from uuid import uuid4
 import pika
 import pytest
 
-from tutberry.adapters.rabbitmq_publisher import QUEUES, RabbitMqEventBus, setup_topology
+from tutberry.adapters.rabbitmq_publisher import (
+    QUEUES,
+    RabbitMqEventBus,
+    setup_topology,
+)
 from tutberry.domain.events import BookingCreated
 
 
