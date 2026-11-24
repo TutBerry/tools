@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, lab05-quality]
+    branches: [main, lab05-quality, lab-06]
   pull_request:
 
 jobs:
@@ -28,6 +28,8 @@ jobs:
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
       DATABASE_URL: postgresql://tutberry:tutberry@localhost:5432/tutberry
       COVERAGE_FILE: /tmp/.coverage
+      CACHE_URL: redis://127.0.0.1:1/0
+      BROKER_URL: amqp://guest:guest@127.0.0.1:1/
 
     steps:
       - name: Checkout repository
@@ -86,3 +88,43 @@ jobs:
 
       - name: Check test order independence with pytest-randomly
         run: timeout --signal=TERM --kill-after=5s 60s python -m pytest tests/ -q -p no:cacheprovider -p randomly --randomly-seed=20261121
+
+  async-integration:
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:4-management-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q check_running"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DJANGO_SECRET_KEY: github-actions-ci-only-secret
+      DATABASE_URL: postgresql://tutberry:tutberry@localhost:5432/tutberry
+      TEST_BROKER_URL: amqp://guest:guest@127.0.0.1:5672/
+      TEST_CACHE_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Check domain dependency boundaries
+        run: |
+          if grep -REn '^[[:space:]]*(from|import)[[:space:]]+(pika|aio_pika|redis)([[:space:].]|$)' tutberry/domain tutberry/services; then
+            exit 1
+          fi
+      - name: Integration tests
+        run: python -m pytest tests/test_broker_integration.py tests/test_valkey_integration.py tests/test_event_idempotency.py -q -p no:randomly
