@@ -6,7 +6,6 @@ from dataclasses import asdict
 import pika
 
 from tutberry.domain.events import DomainEvent
-
 from tutberry.workers.cache_invalidator import CACHE_INVALIDATION_BINDINGS
 
 EXCHANGE = "booking.events"
