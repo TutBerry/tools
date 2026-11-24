@@ -1,0 +1,9 @@
+from typing import Any, Protocol
+
+
+class Cache(Protocol):
+    """Database copies: an unavailable cache is a miss."""
+
+    def get(self, key: str) -> Any | None: ...
+    def set(self, key: str, value: Any, ttl: int) -> None: ...
+    def delete(self, *keys: str) -> None: ...
