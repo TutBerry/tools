@@ -1,4 +1,4 @@
-"""Step 3: consume booking events in a separate process."""
+"""Run notification and cache invalidation consumers."""
 import logging
 import os
 import signal
@@ -7,24 +7,20 @@ import time
 import django
 import pika
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tutberry.settings")
-django.setup()
-
 from django.conf import settings
 from tutberry.adapters.rabbitmq_consumer import RabbitMqConsumer
 from tutberry.adapters.valkey_cache import client_for
 from tutberry.workers.cache_invalidator import CacheInvalidationHandler
+from tutberry.adapters.smtp_mail import SmtpMail
+from tutberry.adapters.valkey_processed_events import ValkeyProcessedEvents
+from tutberry.workers.notification_handler import NotificationHandler
 
 logger = logging.getLogger(__name__)
 
 
-class LoggingHandler:
-    def handle(self, routing_key, payload):
-        logger.info("event_received %s %s", payload["event_id"], routing_key)
-        logger.info("event_processed %s", payload["event_id"])
-
-
 def main():
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tutberry.settings")
+    django.setup()
     logging.basicConfig(level=settings.LOG_LEVEL.upper())
     stopping = False
 
@@ -39,9 +35,16 @@ def main():
         cache_client = None
         try:
             connection = pika.BlockingConnection(pika.URLParameters(settings.BROKER_URL))
-            consumer = RabbitMqConsumer(connection.channel(), "booking.notifications", LoggingHandler())
-            consumer.setup()
             cache_client = client_for(settings.CACHE_URL)
+            consumer = RabbitMqConsumer(
+                connection.channel(), "booking.notifications",
+                NotificationHandler(SmtpMail(settings.SMTP_HOST, settings.SMTP_PORT)),
+                processed=ValkeyProcessedEvents(cache_client),
+                max_attempts=settings.NOTIFICATION_MAX_ATTEMPTS,
+                lease_seconds=settings.PROCESSING_LEASE_SECONDS,
+                keep_seconds=settings.PROCESSED_EVENTS_TTL_HOURS * 3600,
+            )
+            consumer.setup()
             invalidator = RabbitMqConsumer(connection.channel(), "booking.cache", CacheInvalidationHandler(cache_client))
             invalidator.setup()
             while not stopping:
