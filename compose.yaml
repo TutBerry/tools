@@ -4,7 +4,6 @@ x-app: &app
     DJANGO_SECRET_KEY: local-development-only-not-for-production
     DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
     DATABASE_URL: postgresql://tutberry:tutberry@db:5432/tutberry
-    APP_VERSION: 0.1.0
     LOG_LEVEL: info
     BROKER_URL: amqp://tutberry:tutberry@broker:5672/
     CACHE_URL: redis://cache:6379/0
@@ -25,6 +24,8 @@ services:
   worker:
     <<: *app
     command: ["python", "-m", "tutberry.workers.notifier"]
+    healthcheck:
+      disable: true
     depends_on:
       db:
         condition: service_healthy
