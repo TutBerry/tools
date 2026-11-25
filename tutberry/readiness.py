@@ -5,6 +5,7 @@ from django.db import connection
 from django.http import JsonResponse
 
 from tutberry.adapters.valkey_cache import client_for
+from tutberry.metrics import READY
 
 def database_probe():
     with connection.cursor() as cursor:
@@ -41,4 +42,5 @@ def ready(request):
         checks[name] = {"status": state}
         if state == "unavailable" or (state == "degraded" and overall == "ok"):
             overall = state
+    READY.set(0 if overall == 'unavailable' else 1)
     return JsonResponse({"status": overall, "checks": checks, "version": settings.APP_VERSION}, status=503 if overall == "unavailable" else 200)
