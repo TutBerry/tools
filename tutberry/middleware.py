@@ -3,6 +3,7 @@ import time
 import uuid
 
 import structlog
+from opentelemetry import trace
 
 from tutberry.metrics import DURATION, REQUESTS
 
@@ -16,7 +17,8 @@ class RequestLoggingMiddleware:
     def __call__(self, request):
         structlog.contextvars.clear_contextvars()
         request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
-        structlog.contextvars.bind_contextvars(request_id=request_id)
+        context = trace.get_current_span().get_span_context()
+        structlog.contextvars.bind_contextvars(request_id=request_id, trace_id=format(context.trace_id, '032x') if context.is_valid else None)
         start = time.perf_counter()
         try:
             response = self.get_response(request)
