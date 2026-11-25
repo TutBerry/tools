@@ -45,3 +45,8 @@ npx --yes @mermaid-js/mermaid-cli -i docs/architecture/c4/context.mmd -o /tmp/tu
 ```
 
 Та же проверка выполняется для остальных файлов `.mmd`.
+
+## Развёртывание
+
+- [Диаграмма Mermaid](deployment.mmd)
+- [Решения и результаты проверок](deployment-notes.md)
