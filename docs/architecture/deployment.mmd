@@ -1,0 +1,24 @@
+flowchart TB
+    git["GitHub · исходный код"]
+    ci["GitHub Actions · тесты, сборка, Trivy"]
+    reg[("GHCR · sha-метки и digest")]
+    subgraph stand["Учебный стенд — одна машина"]
+        api["API · Django / Gunicorn · 1 CPU / 512 МБ"]
+        worker["Worker · тот же образ · 1 CPU / 512 МБ"]
+        db[("PostgreSQL 17 · 512 МБ · pgdata")]
+        cache[("Valkey 8 · 256 МБ · cachedata")]
+        broker[("RabbitMQ 4 · 512 МБ · brokerdata")]
+        mail["Mailpit · 128 МБ"]
+    end
+    git --> ci
+    ci -->|Проверенный образ из main| reg
+    ci -.->|Ручной Deploy через SSH| api
+    reg -->|pull sha| api
+    reg -->|тот же образ| worker
+    api --> db
+    api --> cache
+    api --> broker
+    broker --> worker
+    worker --> db
+    worker --> cache
+    worker -->|SMTP| mail
