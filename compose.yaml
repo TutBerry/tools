@@ -5,12 +5,15 @@ x-app: &app
     DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,api
     DATABASE_URL: postgresql://tutberry:tutberry@db:5432/tutberry
     LOG_LEVEL: info
+    OTLP_ENDPOINT: ${OTLP_ENDPOINT:-}
+    TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-1}
     BROKER_URL: amqp://tutberry:tutberry@broker:5672/
     CACHE_URL: redis://cache:6379/0
     SMTP_HOST: mailpit
     SMTP_PORT: "1025"
 services:
   api:
+    stop_grace_period: 40s
     <<: *app
     ports: ["8080:8080"]
     command: sh -c "python manage.py migrate --noinput && gunicorn tutberry.wsgi:application --bind 0.0.0.0:8080 --access-logfile -"
@@ -22,6 +25,7 @@ services:
       broker:
         condition: service_started
   worker:
+    stop_grace_period: 40s
     <<: *app
     command: ["python", "-m", "tutberry.workers.notifier"]
     healthcheck:
