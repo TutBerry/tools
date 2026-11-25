@@ -121,3 +121,15 @@ class UserProfileRecord(models.Model):
                 name="profile_valid_role",
             ),
         ]
+
+
+class OutboxRecord(models.Model):
+    event_id = models.CharField(max_length=36, unique=True)
+    routing_key = models.CharField(max_length=80)
+    payload = models.JSONField()
+    headers = models.JSONField(default=dict)
+    published_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["id"], condition=models.Q(published_at__isnull=True), name="outbox_unpublished_idx")]
