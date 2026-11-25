@@ -133,3 +133,10 @@ class OutboxRecord(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["id"], condition=models.Q(published_at__isnull=True), name="outbox_unpublished_idx")]
+
+
+class AuditRecord(models.Model):
+    actor_id = models.UUIDField()
+    object_id = models.UUIDField()
+    action = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
