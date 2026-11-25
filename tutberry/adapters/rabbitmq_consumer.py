@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 import pika
+from opentelemetry import propagate, trace
 
 from tutberry.adapters.rabbitmq_publisher import setup_topology
 from tutberry.ports.processed_events import Claim
@@ -51,7 +52,8 @@ class RabbitMqConsumer:
                 if claim is Claim.IN_PROGRESS:
                     raise LeaseHeld()
                 claimed = True
-            self.handler.handle(kind, payload)
+            with trace.get_tracer(__name__).start_as_current_span('event.consume', context=propagate.extract(headers)):
+                self.handler.handle(kind, payload)
             if claimed:
                 self.processed.mark_done(event_id, self.keep)
         except Exception as exc:  # noqa: BLE001 - unknown handler failures go to DLQ
