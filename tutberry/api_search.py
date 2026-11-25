@@ -1,11 +1,14 @@
 """Public listing search with database-side filtering and date availability."""
+from django.conf import settings
 from django.db.models import Exists, OuterRef
 from rest_framework import serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from tutberry.adapters.valkey_cache import ValkeyCache, client_for
 from tutberry.models import BookingRecord, ListingAvailabilityRecord, ListingRecord
+from tutberry.services.listing_query import cached_search
 
 
 class ListingSearchQuery(serializers.Serializer):
@@ -36,6 +39,15 @@ def list_available_listings(request):
     params = ListingSearchQuery(data=request.query_params)
     params.is_valid(raise_exception=True)
     values = params.validated_data
+    cache = ValkeyCache(client_for(settings.CACHE_URL))
+    try:
+        return Response(cached_search(values, cache, settings.LISTINGS_CACHE_TTL_SECONDS,
+                                      lambda: load_listings(values)))
+    finally:
+        cache.client.close()
+
+
+def load_listings(values):
     start, end = values["start_date"], values["end_date"]
     blocked = ListingAvailabilityRecord.objects.filter(
         listing_id=OuterRef("pk"),
@@ -67,7 +79,7 @@ def list_available_listings(request):
     listings = queryset.order_by("id").values(
         "id", "title", "category", "location", "daily_rate", "deposit"
     )[:limit]
-    return Response({
+    return {
         "items": [
             {
                 "id": str(item["id"]),
@@ -80,4 +92,4 @@ def list_available_listings(request):
             for item in listings
         ],
         "limit": limit,
-    })
+    }

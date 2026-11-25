@@ -2,11 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, lab05-quality]
+    branches: [main, lab05-quality, lab-06]
+    tags: ["v*"]
   pull_request:
 
 jobs:
   quality-and-tests:
+    if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -28,6 +30,8 @@ jobs:
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
       DATABASE_URL: postgresql://tutberry:tutberry@localhost:5432/tutberry
       COVERAGE_FILE: /tmp/.coverage
+      CACHE_URL: redis://127.0.0.1:1/0
+      BROKER_URL: amqp://guest:guest@127.0.0.1:1/
 
     steps:
       - name: Checkout repository
@@ -86,3 +90,161 @@ jobs:
 
       - name: Check test order independence with pytest-randomly
         run: timeout --signal=TERM --kill-after=5s 60s python -m pytest tests/ -q -p no:cacheprovider -p randomly --randomly-seed=20261121
+
+  async-integration:
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:4-management-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q check_running"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DJANGO_SECRET_KEY: github-actions-ci-only-secret
+      DATABASE_URL: postgresql://tutberry:tutberry@localhost:5432/tutberry
+      TEST_BROKER_URL: amqp://guest:guest@127.0.0.1:5672/
+      TEST_CACHE_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Check domain dependency boundaries
+        run: |
+          if grep -REn '^[[:space:]]*(from|import)[[:space:]]+(pika|aio_pika|redis)([[:space:].]|$)' tutberry/domain tutberry/services; then
+            exit 1
+          fi
+      - name: Integration tests
+        run: python -m pytest tests/test_broker_integration.py tests/test_valkey_integration.py tests/test_event_idempotency.py -q -p no:randomly
+
+  image-security:
+    needs: [quality-and-tests, async-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Set image version
+        id: version
+        run: echo "tag=sha-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          pull: true
+          tags: tutberry:${{ steps.version.outputs.tag }}
+          build-args: APP_VERSION=${{ steps.version.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Runtime properties
+        env:
+          IMAGE: tutberry:${{ steps.version.outputs.tag }}
+        run: |
+          docker run --rm "$IMAGE" sh -ec 'test "$(id -u)" = 10001; for t in uv uvx ruff mypy pytest; do if command -v "$t"; then exit 1; fi; done'
+          docker run --rm "$IMAGE" python -c 'import django, pika, redis'
+          docker image inspect -f '{{.Size}}' "$IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Scan image
+        env:
+          IMAGE: tutberry:${{ steps.version.outputs.tag }}
+        run: |
+          set -o pipefail
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.53.0 image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 "$IMAGE" | tee trivy-report.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+
+      - name: Save verified image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: tutberry:${{ steps.version.outputs.tag }}
+        run: |
+          docker image inspect -f '{{.Id}}' "$IMAGE" > image-id.txt
+          docker save "$IMAGE" -o verified-image.tar
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: verified-image
+          path: |
+            verified-image.tar
+            image-id.txt
+          retention-days: 1
+
+  publish-image:
+    needs: [quality-and-tests, async-integration, image-security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-image
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="sha-${GITHUB_SHA:0:7}"
+          source="tutberry:$tag"
+          target="ghcr.io/${GITHUB_REPOSITORY,,}/tutberry:$tag"
+          docker load -i verified-image.tar
+          test "$(docker image inspect -f '{{.Id}}' "$source")" = "$(cat image-id.txt)"
+          test "$(docker run --rm "$source" printenv APP_VERSION)" = "$tag"
+          docker tag "$source" "$target"
+          docker push "$target"
+          docker tag "$target" "ghcr.io/${GITHUB_REPOSITORY,,}/tutberry:latest"
+          docker push "ghcr.io/${GITHUB_REPOSITORY,,}/tutberry:latest"
+          docker image inspect -f '{{index .RepoDigests 0}}' "$target" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  release-image:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag previously published main image
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          commit=$(git rev-parse HEAD)
+          git merge-base --is-ancestor "$commit" origin/main
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version="sha-${commit:0:7}"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/tutberry"
+          docker pull "$image:$version"
+          test "$(docker run --rm "$image:$version" printenv APP_VERSION)" = "$version"
+          docker tag "$image:$version" "$image:$GITHUB_REF_NAME"
+          docker push "$image:$GITHUB_REF_NAME"
+          echo "$GITHUB_REF_NAME -> $version" >> "$GITHUB_STEP_SUMMARY"
+          docker image inspect -f '{{index .RepoDigests 0}}' "$image:$version" >> "$GITHUB_STEP_SUMMARY"

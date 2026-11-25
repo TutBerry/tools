@@ -1,0 +1,94 @@
+x-app: &app
+  image: ghcr.io/${GITHUB_REPOSITORY:?required}/tutberry:${IMAGE_TAG:?required}
+  restart: unless-stopped
+  deploy:
+    resources:
+      limits: {cpus: '1.0', memory: 512M}
+  environment:
+    DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?required}
+    DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?required}
+    DATABASE_URL: ${DATABASE_URL:?required}
+    LOG_LEVEL: info
+    BROKER_URL: ${BROKER_URL:?required}
+    CACHE_URL: redis://cache:6379/0
+    SMTP_HOST: mailpit
+    SMTP_PORT: "1025"
+services:
+  api:
+    <<: *app
+    ports: ["127.0.0.1:8080:8080"]
+    command: sh -c "gunicorn tutberry.wsgi:application --bind 0.0.0.0:8080 --access-logfile -"
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+      broker:
+        condition: service_started
+  worker:
+    <<: *app
+    command: ["python", "-m", "tutberry.workers.notifier"]
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+  db:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {cpus: '1.0', memory: 512M}
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: tutberry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: tutberry
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tutberry -d tutberry"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+  broker:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {cpus: '1.0', memory: 512M}
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: tutberry
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?required}
+    volumes: ["brokerdata:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+  cache:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {cpus: '1.0', memory: 256M}
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes: ["cachedata:/data"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+  mailpit:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {cpus: '1.0', memory: 128M}
+    image: axllent/mailpit:v1.18
+volumes:
+  pgdata:
+  brokerdata:
+  cachedata:

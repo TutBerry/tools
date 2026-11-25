@@ -58,3 +58,23 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.BasicAuthentication",
     ],
 }
+
+# Optional asynchronous infrastructure; legacy CI can run without services.
+BROKER_URL = os.getenv("BROKER_URL", "amqp://tutberry:tutberry@broker:5672/")
+CACHE_URL = os.getenv("CACHE_URL", "redis://cache:6379/0")
+SMTP_HOST = os.getenv("SMTP_HOST", "mailpit")
+
+def bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise ImproperlyConfigured(f"Invalid {name}") from exc
+    if not minimum <= value <= maximum:
+        raise ImproperlyConfigured(f"Invalid {name}")
+    return value
+
+SMTP_PORT = bounded_int("SMTP_PORT", 1025, 1, 65535)
+NOTIFICATION_MAX_ATTEMPTS = bounded_int("NOTIFICATION_MAX_ATTEMPTS", 3, 1, 10)
+LISTINGS_CACHE_TTL_SECONDS = bounded_int("LISTINGS_CACHE_TTL_SECONDS", 5, 0, 300)
+PROCESSED_EVENTS_TTL_HOURS = bounded_int("PROCESSED_EVENTS_TTL_HOURS", 24, 1, 168)
+PROCESSING_LEASE_SECONDS = bounded_int("PROCESSING_LEASE_SECONDS", 60, 10, 600)

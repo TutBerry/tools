@@ -1,0 +1,105 @@
+name: Deploy staging
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Published sha-xxxxxxx image
+        required: true
+        type: string
+      migrate:
+        description: Apply migrations (disable for compatible rollback)
+        type: boolean
+        default: true
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      MIGRATE: ${{ inputs.migrate }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+      DJANGO_ALLOWED_HOSTS: ${{ secrets.DJANGO_ALLOWED_HOSTS }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BROKER_URL: ${{ secrets.BROKER_URL }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      RABBITMQ_DEFAULT_PASS: ${{ secrets.RABBITMQ_DEFAULT_PASS }}
+      STAND_URL: ${{ vars.STAND_URL }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate release and prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_TAG" =~ ^sha-[0-9a-f]{7}$ ]]
+          commit=$(git rev-parse "${IMAGE_TAG#sha-}^{commit}")
+          git merge-base --is-ancestor "$commit" HEAD
+          git show "$commit:compose.prod.yaml" > compose.release.yaml
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_KEY DEPLOY_KNOWN_HOSTS DJANGO_SECRET_KEY DJANGO_ALLOWED_HOSTS DATABASE_URL BROKER_URL POSTGRES_PASSWORD RABBITMQ_DEFAULT_PASS STAND_URL; do
+            test -n "${!name}" || { echo "Missing $name"; exit 1; }
+          done
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          umask 077
+          python - <<'PY'
+          import os
+          keys = ["IMAGE_TAG", "DJANGO_SECRET_KEY", "DJANGO_ALLOWED_HOSTS", "DATABASE_URL", "BROKER_URL", "POSTGRES_PASSWORD", "RABBITMQ_DEFAULT_PASS"]
+          with open("staging.env", "w") as f:
+              f.write("GITHUB_REPOSITORY=" + os.environ["GITHUB_REPOSITORY"].lower() + "\n")
+              for key in keys:
+                  value = os.environ[key]
+                  if any(c in value for c in "\r\n'\\"):
+                      raise ValueError("Unsupported dotenv character in " + key)
+                  f.write(key + "='" + value + "'\n")
+          PY
+      - name: Deploy over SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$DEPLOY_USER@$DEPLOY_HOST"
+          ssh -o BatchMode=yes "$target" 'umask 077; mkdir -p ~/tutberry'
+          scp -o BatchMode=yes compose.release.yaml "$target:tutberry/compose.prod.yaml"
+          scp -o BatchMode=yes staging.env "$target:tutberry/.env"
+          printf '%s' "$GHCR_TOKEN" | ssh -o BatchMode=yes "$target" "docker login ghcr.io -u '$GITHUB_ACTOR' --password-stdin"
+          ssh -o BatchMode=yes "$target" bash -s -- "$MIGRATE" <<'REMOTE'
+          set -euo pipefail
+          cd ~/tutberry
+          chmod 600 .env
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          docker compose -f compose.prod.yaml pull
+          docker compose -f compose.prod.yaml up -d --wait db cache broker mailpit
+          if [ "$1" = true ]; then
+            docker compose -f compose.prod.yaml run --rm --no-deps api python manage.py migrate --noinput
+          fi
+          docker compose -f compose.prod.yaml up -d --wait --no-build api worker
+          REMOTE
+      - name: Verify deployed version
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 10 --retry-all-errors --max-time 10 "${STAND_URL%/}/health"
+          curl --fail --silent --show-error --max-time 10 "${STAND_URL%/}/version" | python -c 'import json, os, sys; assert json.load(sys.stdin)["version"] == os.environ["IMAGE_TAG"]'
+      - name: Record deployment outcome
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          printf '%s | %s | %s | %s | %s\n' "$(date -u +%FT%TZ)" "$IMAGE_TAG" "$GITHUB_ACTOR" "$OUTCOME" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY" | ssh -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" 'mkdir -p ~/tutberry/docs/runbooks; cat >> ~/tutberry/docs/runbooks/deployment-log.md'
+      - name: Remove local secrets
+        if: always()
+        run: rm -f staging.env ~/.ssh/id_ed25519 ~/.ssh/known_hosts
