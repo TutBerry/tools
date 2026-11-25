@@ -33,3 +33,27 @@ groups:
         annotations:
           summary: ServiceUnreachable
           runbook: docs/runbooks/alerts.md
+      - alert: OutboxBacklog
+        expr: outbox_pending > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: OutboxBacklog
+          runbook: docs/runbooks/alerts.md
+      - alert: OutboxDelayed
+        expr: outbox_oldest_seconds > 60
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: OutboxDelayed
+          runbook: docs/runbooks/alerts.md
+      - alert: ServiceNotReady
+        expr: service_ready == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: ServiceNotReady
+          runbook: docs/runbooks/alerts.md
