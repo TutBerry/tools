@@ -2,7 +2,7 @@ x-app: &app
   build: .
   environment:
     DJANGO_SECRET_KEY: local-development-only-not-for-production
-    DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+    DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,api
     DATABASE_URL: postgresql://tutberry:tutberry@db:5432/tutberry
     LOG_LEVEL: info
     BROKER_URL: amqp://tutberry:tutberry@broker:5672/
