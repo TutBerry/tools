@@ -1,1 +1,35 @@
-groups: []
+groups:
+  - name: tutberry-http
+    rules:
+      - alert: HighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.005
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: HighErrorRate
+          runbook: docs/runbooks/alerts.md
+      - alert: SlowListingSearch
+        expr: histogram_quantile(0.95,sum by(le)(rate(http_request_duration_seconds_bucket{route="api/listings",method="GET"}[5m]))) > 0.3
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: SlowListingSearch
+          runbook: docs/runbooks/alerts.md
+      - alert: SlowBooking
+        expr: histogram_quantile(0.95,sum by(le)(rate(http_request_duration_seconds_bucket{route="api/bookings",method="POST"}[5m]))) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: SlowBooking
+          runbook: docs/runbooks/alerts.md
+      - alert: ServiceUnreachable
+        expr: up{job="tutberry"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: ServiceUnreachable
+          runbook: docs/runbooks/alerts.md
