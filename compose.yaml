@@ -70,7 +70,30 @@ services:
   mailpit:
     image: axllent/mailpit:v1.18
     ports: ["127.0.0.1:8025:8025"]
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: ["observability"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - promdata:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: ["observability"]
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    profiles: ["observability"]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["127.0.0.1:16686:16686"]
 volumes:
+  promdata:
   pgdata:
   brokerdata:
   cachedata:
