@@ -1,19 +1,18 @@
 """Authenticated booking endpoint using server-side listing prices."""
 import uuid
 
-from django.conf import settings
 from django.db import transaction
 from rest_framework import serializers, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from tutberry.adapters.rabbitmq_publisher import RabbitMqEventBus
 from tutberry.adapters.sql_booking import SqlBookingRepository
 from tutberry.api_errors import problem
 from tutberry.domain.booking import BookingError
 from tutberry.models import ListingAvailabilityRecord, ListingRecord
-from tutberry.services.after_commit import AfterCommitEventBus, BookingEventNotifier
+from tutberry.services.after_commit import BookingEventNotifier
+from tutberry.services.outbox import OutboxEventBus
 from tutberry.services.booking_service import BookingRequest, BookingService
 
 
@@ -60,7 +59,7 @@ def create_booking(request):
                 status=409,
                 content_type="application/problem+json",
             )
-        service = BookingService(SqlBookingRepository(), UuidGenerator(), BookingEventNotifier(AfterCommitEventBus(RabbitMqEventBus(settings.BROKER_URL))))
+        service = BookingService(SqlBookingRepository(), UuidGenerator(), BookingEventNotifier(OutboxEventBus()))
         try:
             booking = service.create(
                 BookingRequest(
