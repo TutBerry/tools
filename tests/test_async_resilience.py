@@ -9,7 +9,7 @@ from redis.exceptions import ConnectionError
 from rest_framework.test import APIClient
 
 from tutberry.adapters.valkey_cache import ValkeyCache
-from tutberry.models import BookingRecord, ListingRecord
+from tutberry.models import BookingRecord, ListingRecord, OutboxRecord
 from tutberry.services.listing_query import cached_search
 from tutberry.workers.cache_invalidator import CacheInvalidationHandler
 
@@ -59,7 +59,8 @@ def test_booking_survives_broker_failure(monkeypatch):
         "start_date": "2030-01-01", "end_date": "2030-01-02"}, format="json")
     assert response.status_code == 201
     assert BookingRecord.objects.filter(pk=response.json()["id"]).exists()
-    publish.assert_called_once()
+    publish.assert_not_called()
+    assert OutboxRecord.objects.filter(payload__booking_id=response.json()["id"], published_at__isnull=True).exists()
 
 
 def test_cache_adapter_failure():
