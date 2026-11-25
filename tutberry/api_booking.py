@@ -10,9 +10,10 @@ from rest_framework.response import Response
 from tutberry.adapters.sql_booking import SqlBookingRepository
 from tutberry.api_errors import problem
 from tutberry.domain.booking import BookingError
-from tutberry.models import ListingAvailabilityRecord, ListingRecord
+from tutberry.models import AuditRecord, ListingAvailabilityRecord, ListingRecord
 from tutberry.services.after_commit import BookingEventNotifier
 from tutberry.services.outbox import OutboxEventBus
+from tutberry.rate_limit import allow_booking
 from tutberry.services.booking_service import BookingRequest, BookingService
 
 
@@ -30,6 +31,8 @@ class UuidGenerator:
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def create_booking(request):
+    if not allow_booking(request.user.pk):
+        return Response({"detail": "Too many requests"}, status=429, headers={"Retry-After": "1"})
     data = CreateBookingSerializer(data=request.data)
     data.is_valid(raise_exception=True)
     values = data.validated_data
@@ -73,6 +76,8 @@ def create_booking(request):
             )
         except BookingError as exc:
             return Response(problem(409 if "unavailable" in str(exc).lower() else 400, "Conflict" if "unavailable" in str(exc).lower() else "Bad Request", str(exc)), status=409 if "unavailable" in str(exc).lower() else 400, content_type="application/problem+json")
+
+        AuditRecord.objects.create(actor_id=tenant_id, object_id=booking.id, action="booking.created")
 
     return Response(
         {"id": str(booking.id), "status": booking.status.value, "rent": str(booking.price.rent), "deposit": str(booking.price.deposit), "total": str(booking.price.total)},
