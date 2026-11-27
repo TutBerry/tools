@@ -61,7 +61,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/repo:ro" \
             ghcr.io/gitleaks/gitleaks:v8.24.2 detect \
-            --source=/repo --redact --exit-code=1
+            --source=/repo --redact=100 --verbose --exit-code=1
 
       - name: Verify Must requirement traceability
         run: python scripts/check_traceability.py
