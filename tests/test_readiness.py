@@ -15,6 +15,7 @@ def test_readiness(monkeypatch, failed, status, code):
     assert Client().get("/health").status_code == 200
 
 
+@pytest.mark.django_db
 def test_metrics():
     client = Client()
     client.get("/health")
