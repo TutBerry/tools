@@ -7,7 +7,7 @@ x-app: &app
   environment:
     DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?required}
     DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?required}
-    DATABASE_URL: ${DATABASE_URL:?required}
+    DATABASE_URL: ${RUNTIME_DATABASE_URL:?restricted runtime role required}
     LOG_LEVEL: info
     BROKER_URL: ${BROKER_URL:?required}
     CACHE_URL: redis://cache:6379/0
@@ -58,7 +58,7 @@ services:
     deploy:
       resources:
         limits: {cpus: '1.0', memory: 512M}
-    image: rabbitmq:4-management-alpine
+    image: rabbitmq:4-alpine
     environment:
       RABBITMQ_DEFAULT_USER: tutberry
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?required}
