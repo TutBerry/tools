@@ -7,6 +7,7 @@ from django.http import JsonResponse
 from tutberry.adapters.valkey_cache import client_for
 from tutberry.metrics import READY
 
+
 def database_probe():
     with connection.cursor() as cursor:
         cursor.execute("SELECT 1")
