@@ -1,0 +1,32 @@
+name: Lab 7 worker outage
+on:
+  workflow_dispatch:
+  push:
+    branches: [lab-07]
+    paths:
+      - '.github/workflows/lab07-incident.yml'
+      - 'scripts/incident-smoke.sh'
+jobs:
+  incident:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start isolated stack
+        run: OTLP_ENDPOINT=http://jaeger:4318/v1/traces docker compose --profile observability up -d --build
+      - name: Exercise
+        run: bash scripts/incident-smoke.sh | tee incident.log
+        shell: bash
+      - name: Collect evidence
+        if: always()
+        run: docker compose --profile observability logs --no-color > compose.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: incident-evidence
+          path: |
+            incident.log
+            compose.log
+      - name: Cleanup isolated stack
+        if: always()
+        run: docker compose --profile observability down -v
