@@ -6,11 +6,13 @@ for i in {1..90}; do
   sleep 2
 done
 curl -fsS http://localhost:8080/health
-listing=$(docker compose exec -T api python manage.py shell -c "from django.contrib.auth.models import User; from tutberry.models import ListingRecord; from uuid import uuid4; User.objects.create_user(username='incident',password='isolated-ci-only',email='incident@example.test'); print(ListingRecord.objects.create(owner_id=uuid4(),title='Incident drill',daily_rate=500,deposit=100,status='active').id)" | tail -1)
+incident_password=$(openssl rand -hex 24)
+echo "::add-mask::$incident_password"
+listing=$(docker compose exec -T -e INCIDENT_PASSWORD="$incident_password" api python manage.py shell -c "import os; from django.contrib.auth.models import User; from tutberry.models import ListingRecord; from uuid import uuid4; User.objects.create_user(username='incident',password=os.environ['INCIDENT_PASSWORD'],email='incident@example.test'); print(ListingRecord.objects.create(owner_id=uuid4(),title='Incident drill',daily_rate=500,deposit=100,status='active').id)" | tail -1)
 docker compose stop worker
 echo "outage_start $(stamp)"
 curl -fsS 'http://localhost:8080/api/listings?start_date=2035-01-01&end_date=2035-01-02' >/dev/null
-curl -fsS -u incident:isolated-ci-only -H 'Content-Type: application/json' -d "{\"listing_id\":\"$listing\",\"start_date\":\"2035-01-01\",\"end_date\":\"2035-01-02\"}" http://localhost:8080/api/bookings
+curl -fsS -u "incident:$incident_password" -H 'Content-Type: application/json' -d "{\"listing_id\":\"$listing\",\"start_date\":\"2035-01-01\",\"end_date\":\"2035-01-02\"}" http://localhost:8080/api/bookings
 echo
 alert_count() {
   curl -fsSG http://localhost:9090/api/v1/query --data-urlencode 'query=ALERTS{alertname="OutboxDelayed",alertstate="firing"}' | jq '.data.result | length'
