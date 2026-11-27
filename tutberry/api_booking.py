@@ -33,6 +33,8 @@ class UuidGenerator:
 def create_booking(request):
     if not allow_booking(request.user.pk):
         return Response({"detail": "Too many requests"}, status=429, headers={"Retry-After": "1"})
+    if not isinstance(request.data, dict) or set(request.data) - {"listing_id", "start_date", "end_date"}:
+        return Response({"detail": "Unexpected input fields"}, status=400)
     data = CreateBookingSerializer(data=request.data)
     data.is_valid(raise_exception=True)
     values = data.validated_data
