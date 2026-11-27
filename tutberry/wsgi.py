@@ -1,7 +1,6 @@
 import os
 
 from django.core.wsgi import get_wsgi_application
-
 from opentelemetry.instrumentation.django import DjangoInstrumentor
 from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
 
