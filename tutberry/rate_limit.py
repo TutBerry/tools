@@ -1,6 +1,7 @@
 """Atomic shared token bucket, fail open on optional cache outage."""
 from django.conf import settings
 from redis.exceptions import RedisError
+
 from tutberry.adapters.valkey_cache import client_for
 
 SCRIPT = """
