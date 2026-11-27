@@ -22,6 +22,7 @@ def main():
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tutberry.settings")
     django.setup()
     from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
+
     from tutberry.tracing import configure_tracing
     configure_tracing('tutberry-worker')
     PsycopgInstrumentor().instrument()
