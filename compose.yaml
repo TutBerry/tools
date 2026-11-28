@@ -16,7 +16,7 @@ services:
     stop_grace_period: 40s
     <<: *app
     ports: ["8080:8080"]
-    command: sh -c "python manage.py migrate --noinput && gunicorn tutberry.wsgi:application --bind 0.0.0.0:8080 --access-logfile -"
+    command: sh -c "python manage.py migrate --noinput && exec gunicorn --graceful-timeout 30 tutberry.wsgi:application --bind 0.0.0.0:8080 --access-logfile -"
     depends_on:
       db:
         condition: service_healthy
