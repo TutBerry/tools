@@ -36,6 +36,8 @@ class ListingSearchQuery(serializers.Serializer):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def list_available_listings(request):
+    if set(request.query_params) - set(ListingSearchQuery().fields):
+        return Response({"detail": "Unexpected query parameters"}, status=400)
     params = ListingSearchQuery(data=request.query_params)
     params.is_valid(raise_exception=True)
     values = params.validated_data
