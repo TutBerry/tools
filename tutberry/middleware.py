@@ -3,6 +3,9 @@ import time
 import uuid
 
 import structlog
+from django.conf import settings
+from django.core.exceptions import RequestDataTooBig
+from django.http import JsonResponse
 from opentelemetry import trace
 
 from tutberry.metrics import DURATION, REQUESTS
@@ -46,3 +49,19 @@ class NoStoreMiddleware:
         if request.path.startswith("/api/"):
             response["Cache-Control"] = "no-store"
         return response
+
+
+class RequestSizeMiddleware:
+    """Enforce the body limit before DRF parses JSON."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH"}:
+            try:
+                if len(request.body) > settings.DATA_UPLOAD_MAX_MEMORY_SIZE:
+                    raise RequestDataTooBig
+            except RequestDataTooBig:
+                return JsonResponse({"detail": "Request body too large"}, status=413)
+        return self.get_response(request)
