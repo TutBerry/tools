@@ -84,6 +84,22 @@ jobs:
           })().catch(e=>{console.error(e);process.exit(1)});
           JS
           wait "$load_pid"
+      - name: Verify graceful shutdown with in-flight database request
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose exec -T db psql -U tutberry -d tutberry -c "BEGIN; LOCK TABLE tutberry_listingrecord IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(8); COMMIT;" > evidence/shutdown-lock.log 2>&1 &
+          lock_pid=$!
+          sleep 1
+          curl --max-time 25 -fsS -o evidence/shutdown-response.json -w '%{http_code}' 'http://localhost:8080/api/listings?start_date=2031-02-01&end_date=2031-02-02' > evidence/shutdown-status.txt &
+          request_pid=$!
+          sleep 1
+          kill -0 "$request_pid"
+          docker compose stop api
+          wait "$request_pid"
+          wait "$lock_pid"
+          test "$(cat evidence/shutdown-status.txt)" = 200
+          jq -e 'has("items")' evidence/shutdown-response.json
       - name: Collect logs
         if: always()
         run: |
