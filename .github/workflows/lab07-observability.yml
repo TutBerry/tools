@@ -1,0 +1,115 @@
+name: Lab 7 observability exercise
+on:
+  pull_request:
+    branches: [lab-06]
+  workflow_dispatch:
+jobs:
+  exercise:
+    if: github.head_ref == 'lab-07' || github.ref == 'refs/heads/lab-07'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OTLP_ENDPOINT: http://jaeger:4318/v1/traces
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start nine services
+        run: docker compose --profile observability up -d --build
+      - name: Exercise dependency failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          exec > >(tee evidence/exercise.log) 2>&1
+          wait_ready() {
+            for i in $(seq 1 60); do
+              if curl -fsS --max-time 8 http://localhost:8080/ready | jq -e '.status == "ok"'; then return 0; fi
+              sleep 2
+            done
+            return 1
+          }
+          check() {
+            code=$(curl -sS --max-time 15 -o evidence/"$1".json -w '%{http_code}' http://localhost:8080/ready)
+            test "$code" = "$2"
+            jq -e --arg state "$3" '.status == $state' evidence/"$1".json
+            curl -fsS http://localhost:8080/health
+          }
+          wait_ready
+          docker compose --profile observability ps | tee evidence/services.txt
+          check baseline 200 ok
+          date -u
+          docker compose stop cache
+          check cache-down 200 degraded
+          docker compose start cache
+          wait_ready
+          date -u
+          docker compose stop db
+          check db-down 503 unavailable
+          docker compose start db
+          wait_ready
+          check recovered 200 ok
+          date -u
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null -w '%{time_total}\n' 'http://localhost:8080/api/listings?start_date=2030-01-01&end_date=2030-01-02'
+          done | tee evidence/search-seconds.txt
+          curl -fsS http://localhost:8080/metrics > evidence/metrics.txt
+          sleep 20
+          curl -fsS http://localhost:9090/api/v1/targets > evidence/prometheus-targets.json
+          curl -fsS http://localhost:16686/api/services > evidence/jaeger-services.json
+      - name: Capture Grafana under search traffic
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+          (for i in $(seq 1 180); do
+            curl -fsS -o /dev/null 'http://localhost:8080/api/listings?start_date=2030-01-01&end_date=2030-01-02'
+            sleep 0.3
+          done) &
+          load_pid=$!
+          node <<'JS'
+          const { chromium } = require('playwright');
+          (async () => {
+            const browser = await chromium.launch({headless:true});
+            try {
+              const page = await browser.newPage({viewport:{width:1600,height:1200}});
+              await page.goto('http://localhost:3000/login');
+              await page.locator('input[name="user"]').fill('admin');
+              await page.locator('input[name="password"]').fill('admin');
+              await page.getByRole('button',{name:'Log in'}).click();
+              await page.waitForTimeout(3000);
+              if (await page.getByText('Skip',{exact:true}).isVisible()) await page.getByText('Skip',{exact:true}).click();
+              await page.goto('http://localhost:3000/d/tutberry-http?from=now-5m&to=now&refresh=5s');
+              await page.getByText('Requests/s',{exact:true}).first().waitFor({timeout:30000});
+              await page.waitForTimeout(25000);
+              await page.screenshot({path:'evidence/dashboard.png',fullPage:true});
+            } finally { await browser.close(); }
+          })().catch(e=>{console.error(e);process.exit(1)});
+          JS
+          wait "$load_pid"
+      - name: Verify graceful shutdown with in-flight database request
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose exec -T db psql -U tutberry -d tutberry -c "BEGIN; LOCK TABLE tutberry_listingrecord IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(8); COMMIT;" > evidence/shutdown-lock.log 2>&1 &
+          lock_pid=$!
+          sleep 1
+          curl --max-time 25 -fsS -o evidence/shutdown-response.json -w '%{http_code}' 'http://localhost:8080/api/listings?start_date=2031-02-01&end_date=2031-02-02' > evidence/shutdown-status.txt &
+          request_pid=$!
+          sleep 1
+          kill -0 "$request_pid"
+          docker compose stop api
+          wait "$request_pid"
+          wait "$lock_pid"
+          test "$(cat evidence/shutdown-status.txt)" = 200
+          jq -e 'has("items")' evidence/shutdown-response.json
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p evidence
+          docker compose --profile observability logs --no-color > evidence/compose.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lab07-observability-evidence
+          path: evidence/
+      - name: Stop temporary stack
+        if: always()
+        run: docker compose --profile observability down -v

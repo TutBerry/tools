@@ -1,20 +1,20 @@
 """Authenticated booking endpoint using server-side listing prices."""
 import uuid
 
-from django.conf import settings
 from django.db import transaction
 from rest_framework import serializers, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from tutberry.adapters.rabbitmq_publisher import RabbitMqEventBus
 from tutberry.adapters.sql_booking import SqlBookingRepository
 from tutberry.api_errors import problem
 from tutberry.domain.booking import BookingError
-from tutberry.models import ListingAvailabilityRecord, ListingRecord
-from tutberry.services.after_commit import AfterCommitEventBus, BookingEventNotifier
+from tutberry.models import AuditRecord, ListingAvailabilityRecord, ListingRecord
+from tutberry.rate_limit import allow_booking
+from tutberry.services.after_commit import BookingEventNotifier
 from tutberry.services.booking_service import BookingRequest, BookingService
+from tutberry.services.outbox import OutboxEventBus
 
 
 class CreateBookingSerializer(serializers.Serializer):
@@ -31,6 +31,11 @@ class UuidGenerator:
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def create_booking(request):
+    allowed, remaining, reset = allow_booking(request.user.pk)
+    if not allowed:
+        return Response({"detail": "Too many requests"}, status=429, headers={"Retry-After": str(max(1, reset)), "RateLimit-Limit": "20", "RateLimit-Remaining": str(remaining), "RateLimit-Reset": str(reset)})
+    if not isinstance(request.data, dict) or set(request.data) - {"listing_id", "start_date", "end_date"}:
+        return Response({"detail": "Unexpected input fields"}, status=400)
     data = CreateBookingSerializer(data=request.data)
     data.is_valid(raise_exception=True)
     values = data.validated_data
@@ -60,7 +65,7 @@ def create_booking(request):
                 status=409,
                 content_type="application/problem+json",
             )
-        service = BookingService(SqlBookingRepository(), UuidGenerator(), BookingEventNotifier(AfterCommitEventBus(RabbitMqEventBus(settings.BROKER_URL))))
+        service = BookingService(SqlBookingRepository(), UuidGenerator(), BookingEventNotifier(OutboxEventBus()))
         try:
             booking = service.create(
                 BookingRequest(
@@ -74,6 +79,8 @@ def create_booking(request):
             )
         except BookingError as exc:
             return Response(problem(409 if "unavailable" in str(exc).lower() else 400, "Conflict" if "unavailable" in str(exc).lower() else "Bad Request", str(exc)), status=409 if "unavailable" in str(exc).lower() else 400, content_type="application/problem+json")
+
+        AuditRecord.objects.create(actor_id=tenant_id, object_id=booking.id, action="booking.created")
 
     return Response(
         {"id": str(booking.id), "status": booking.status.value, "rent": str(booking.price.rent), "deposit": str(booking.price.deposit), "total": str(booking.price.total)},

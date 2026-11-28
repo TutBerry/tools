@@ -34,6 +34,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "tutberry.middleware.NoStoreMiddleware",
     "tutberry.middleware.RequestLoggingMiddleware",
+    "tutberry.middleware.RequestSizeMiddleware",
 ]
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
@@ -54,6 +55,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "tutberry.api_errors.api_exception_handler",
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.BasicAuthentication",
     ],
@@ -78,3 +80,5 @@ NOTIFICATION_MAX_ATTEMPTS = bounded_int("NOTIFICATION_MAX_ATTEMPTS", 3, 1, 10)
 LISTINGS_CACHE_TTL_SECONDS = bounded_int("LISTINGS_CACHE_TTL_SECONDS", 5, 0, 300)
 PROCESSED_EVENTS_TTL_HOURS = bounded_int("PROCESSED_EVENTS_TTL_HOURS", 24, 1, 168)
 PROCESSING_LEASE_SECONDS = bounded_int("PROCESSING_LEASE_SECONDS", 60, 10, 600)
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024

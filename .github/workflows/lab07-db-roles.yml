@@ -1,0 +1,48 @@
+name: Lab 7 database privileges
+on:
+  push:
+    branches: [lab-07]
+  pull_request:
+jobs:
+  privileges:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tutberry
+          POSTGRES_PASSWORD: tutberry
+          POSTGRES_DB: tutberry
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U tutberry" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DJANGO_SECRET_KEY: github-actions-ci-only-secret
+      DATABASE_URL: postgresql://tutberry:tutberry@localhost:5432/tutberry
+      PGHOST: localhost
+      PGUSER: tutberry
+      PGPASSWORD: tutberry
+      PGDATABASE: tutberry
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python manage.py migrate --noinput
+      - name: Provision restricted test role
+        run: |
+          psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE tutberry_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT'
+          psql -v ON_ERROR_STOP=1 -f scripts/grant-runtime-db.sql
+      - name: Verify allowed and forbidden operations
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -c "SET ROLE tutberry_app; INSERT INTO tutberry_auditrecord (actor_id,object_id,action,created_at) VALUES (gen_random_uuid(),gen_random_uuid(),'test',now()); SELECT count(*) FROM tutberry_auditrecord;"
+          for statement in 'CREATE TABLE public.forbidden(id int)' 'UPDATE tutberry_auditrecord SET action = action' 'DELETE FROM tutberry_auditrecord' 'TRUNCATE tutberry_auditrecord' 'ALTER TABLE tutberry_auditrecord ADD COLUMN forbidden int'; do
+            if psql -v ON_ERROR_STOP=1 -c "SET ROLE tutberry_app; $statement" > denial.log 2>&1; then
+              echo "Unexpected permission: $statement"
+              exit 1
+            fi
+            cat denial.log
+            grep -Eq 'permission denied|must be owner' denial.log
+          done

@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 def main():
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tutberry.settings")
     django.setup()
+    from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
+
+    from tutberry.tracing import configure_tracing
+    configure_tracing('tutberry-worker')
+    PsycopgInstrumentor().instrument()
+    from tutberry.workers.outbox_relay import relay_one
     logging.basicConfig(level=settings.LOG_LEVEL.upper())
     stopping = False
 
@@ -47,7 +53,10 @@ def main():
             consumer.setup()
             invalidator = RabbitMqConsumer(connection.channel(), "booking.cache", CacheInvalidationHandler(cache_client))
             invalidator.setup()
+            relay = connection.channel()
+            relay.confirm_delivery()
             while not stopping:
+                relay_one(relay)
                 connection.process_data_events(time_limit=1)
         except (pika.exceptions.AMQPError, OSError):
             logger.exception("worker_connection_failed")
