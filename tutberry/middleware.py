@@ -26,10 +26,10 @@ class RequestLoggingMiddleware:
             logger.exception("request_failed", method=request.method, path=request.path)
             raise
         route = request.resolver_match.route if request.resolver_match else "unmatched"
-        if route != "metrics":
+        if route not in {"metrics", "health", "ready", "version"}:
             method = request.method if request.method in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"} else "OTHER"
             REQUESTS.labels(method, route, str(response.status_code)).inc()
-            DURATION.labels(method, route).observe(time.perf_counter() - start)
+            DURATION.labels(method, route, "error" if response.status_code >= 400 else "success").observe(time.perf_counter() - start)
         response["X-Request-Id"] = request_id
         logger.info("request_handled", method=request.method, path=request.path, status_code=response.status_code, duration_ms=int((time.perf_counter()-start)*1000))
         return response
