@@ -61,3 +61,21 @@ def test_real_cache_invalidation(valkey):
         assert cache.get(key) is None
     finally:
         valkey.delete(key)
+
+
+def test_shared_booking_rate_limit(valkey, settings):
+    from tutberry.rate_limit import allow_booking
+
+    settings.CACHE_URL = os.environ["TEST_CACHE_URL"]
+    user = str(uuid4())
+    try:
+        for _ in range(20):
+            allowed, _, _ = allow_booking(user)
+            assert allowed
+        allowed, remaining, reset = allow_booking(user)
+        assert not allowed
+        assert remaining == 0
+        assert 1 <= reset <= 3
+        assert allow_booking(str(uuid4()))[0]
+    finally:
+        valkey.delete(f"rate:booking:{user}")
