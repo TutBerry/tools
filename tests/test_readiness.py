@@ -18,7 +18,7 @@ def test_readiness(monkeypatch, failed, status, code):
 @pytest.mark.django_db
 def test_metrics():
     client = Client()
-    client.get("/health")
+    client.get("/unknown-metrics-probe")
     response = client.get("/metrics")
     assert response.status_code == 200
     assert b"http_requests_total" in response.content
@@ -29,6 +29,6 @@ def test_unknown_paths_do_not_expand_metric_labels():
 
     client = Client()
     client.get("/unknown-first-123")
-    before = len(list(REQUESTS.collect())[0].samples)
+    before = len(next(iter(REQUESTS.collect())).samples)
     client.get("/unknown-second-456")
-    assert len(list(REQUESTS.collect())[0].samples) == before
+    assert len(next(iter(REQUESTS.collect())).samples) == before
