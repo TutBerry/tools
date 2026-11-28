@@ -14,7 +14,7 @@ from prometheus_client import (
 logger = logging.getLogger(__name__)
 
 REQUESTS = Counter("http_requests_total", "HTTP requests", ["method", "route", "status"])
-DURATION = Histogram("http_request_duration_seconds", "HTTP duration", ["method", "route"], buckets=(.005,.01,.025,.05,.1,.25,.3,.5,1,2,5,10))
+DURATION = Histogram("http_request_duration_seconds", "HTTP duration", ["method", "route", "outcome"], buckets=(.005,.01,.025,.05,.1,.25,.3,.5,1,2,5,10))
 
 def metrics(request):
     from datetime import timedelta
