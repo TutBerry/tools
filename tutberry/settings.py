@@ -34,6 +34,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "tutberry.middleware.NoStoreMiddleware",
     "tutberry.middleware.RequestLoggingMiddleware",
+    "tutberry.middleware.RequestSizeMiddleware",
 ]
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
