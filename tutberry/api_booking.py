@@ -31,8 +31,9 @@ class UuidGenerator:
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def create_booking(request):
-    if not allow_booking(request.user.pk):
-        return Response({"detail": "Too many requests"}, status=429, headers={"Retry-After": "1"})
+    allowed, remaining, reset = allow_booking(request.user.pk)
+    if not allowed:
+        return Response({"detail": "Too many requests"}, status=429, headers={"Retry-After": str(max(1, reset)), "RateLimit-Limit": "20", "RateLimit-Remaining": str(remaining), "RateLimit-Reset": str(reset)})
     if not isinstance(request.data, dict) or set(request.data) - {"listing_id", "start_date", "end_date"}:
         return Response({"detail": "Unexpected input fields"}, status=400)
     data = CreateBookingSerializer(data=request.data)
