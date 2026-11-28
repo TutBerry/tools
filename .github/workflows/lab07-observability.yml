@@ -55,6 +55,35 @@ jobs:
           sleep 20
           curl -fsS http://localhost:9090/api/v1/targets > evidence/prometheus-targets.json
           curl -fsS http://localhost:16686/api/services > evidence/jaeger-services.json
+      - name: Capture Grafana under search traffic
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+          (for i in $(seq 1 180); do
+            curl -fsS -o /dev/null 'http://localhost:8080/api/listings?start_date=2030-01-01&end_date=2030-01-02'
+            sleep 0.3
+          done) &
+          load_pid=$!
+          node <<'JS'
+          const { chromium } = require('playwright');
+          (async () => {
+            const browser = await chromium.launch({headless:true});
+            try {
+              const page = await browser.newPage({viewport:{width:1600,height:1200}});
+              await page.goto('http://localhost:3000/login');
+              await page.locator('input[name="user"]').fill('admin');
+              await page.locator('input[name="password"]').fill('admin');
+              await page.getByRole('button',{name:'Log in'}).click();
+              await page.waitForTimeout(3000);
+              if (await page.getByText('Skip',{exact:true}).isVisible()) await page.getByText('Skip',{exact:true}).click();
+              await page.goto('http://localhost:3000/d/tutberry-http?from=now-5m&to=now&refresh=5s');
+              await page.getByText('Requests/s',{exact:true}).first().waitFor({timeout:30000});
+              await page.waitForTimeout(25000);
+              await page.screenshot({path:'evidence/dashboard.png',fullPage:true});
+            } finally { await browser.close(); }
+          })().catch(e=>{console.error(e);process.exit(1)});
+          JS
+          wait "$load_pid"
       - name: Collect logs
         if: always()
         run: |
